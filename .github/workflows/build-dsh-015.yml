@@ -1,0 +1,114 @@
+name: Build DSH 0.1.5-rc.2 Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-dsh-015.yml'
+      - 'scripts/patch-unsigned.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      DSH_TAG: dsh-v0.1.5-rc.2
+      DSH_COMMIT: fb2c4b9e698e30edb738bca4cf0618587db7d203
+      DSH_DESKTOP_APP_ID: ai.deepseek.harness.local015
+      DSH_DESKTOP_UNSIGNED: '1'
+      DOWNLOAD_TEST_ORIGIN: https://example.invalid
+
+    steps:
+      - name: Checkout build recipe
+        uses: actions/checkout@v4
+
+      - name: Checkout DeepSeek official source
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/deepseek-ai/deepseek-harness.git deepseek-harness
+          Set-Location deepseek-harness
+          git fetch --depth 1 origin "refs/tags/$env:DSH_TAG:refs/tags/$env:DSH_TAG"
+          git checkout --detach $env:DSH_TAG
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $env:DSH_COMMIT) {
+            throw "Official tag commit mismatch: expected $env:DSH_COMMIT, got $actual"
+          }
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '0.1.5-rc.2') { throw "Unexpected root version: $($pkg.version)" }
+          $desktop = Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json
+          if ($desktop.version -ne '0.1.5-rc.2') { throw "Unexpected desktop version: $($desktop.version)" }
+
+      - name: Apply minimal unsigned-packaging patch
+        shell: pwsh
+        run: ./scripts/patch-unsigned.ps1
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+
+      - name: Enable pnpm 11.7.0
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+          node --version
+          pnpm --version
+          python --version
+
+      - name: Setup MSVC developer command
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install exact locked dependencies
+        working-directory: deepseek-harness
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Build official Windows x64 NSIS installer
+        working-directory: deepseek-harness
+        shell: pwsh
+        run: pnpm run package:desktop:win:x64
+
+      - name: Verify installer
+        id: verify
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path deepseek-harness/apps/desktop/.desktop-build/targets/win-x64/artifacts -Filter '*-unsigned.exe' -File -Recurse
+          if ($files.Count -ne 1) {
+            Get-ChildItem -Path deepseek-harness/apps/desktop/.desktop-build/targets/win-x64 -File -Recurse | Select-Object FullName,Length
+            throw "Expected exactly one unsigned installer, found $($files.Count)"
+          }
+          $f = $files[0]
+          $hash = Get-FileHash $f.FullName -Algorithm SHA256
+          "FILE=$($f.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "SHA256=$($hash.Hash.ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Installer: $($f.FullName)"
+          Write-Host "SHA256: $($hash.Hash)"
+
+      - name: Collect artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item '${{ steps.verify.outputs.FILE }}' 'out/DeepSeek-Harness-0.1.5-rc.2-Windows-x64-Unsigned-Setup.exe'
+          @"
+          source_repository=https://github.com/deepseek-ai/deepseek-harness
+          source_tag=$env:DSH_TAG
+          source_commit=$env:DSH_COMMIT
+          version=0.1.5-rc.2
+          sha256=${{ steps.verify.outputs.SHA256 }}
+          build=Windows x64 / NSIS / unsigned
+          "@ | Set-Content out/BUILD_INFO.txt -Encoding UTF8
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepSeek-Harness-0.1.5-rc.2-Windows-x64-Unsigned
+          path: out/*
+          if-no-files-found: error
+          retention-days: 7
