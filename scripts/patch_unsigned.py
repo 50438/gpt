@@ -35,7 +35,7 @@ sub_once(
 
 sub_once(
     r"^    artifactName: 'deepseek-harness-\$\{version\}-\$\{os\}-\$\{arch\}\.\$\{ext\}',$",
-    "    artifactName: `deepseek-harness-${version}-${os}-${arch}${unsigned ? '-unsigned' : ''}.${ext}`,",
+    "    artifactName: unsigned ? 'deepseek-harness-${version}-${os}-${arch}-unsigned.${ext}' : 'deepseek-harness-${version}-${os}-${arch}.${ext}',",
     'unsigned artifact suffix',
 )
 
