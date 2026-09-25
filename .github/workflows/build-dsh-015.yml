@@ -6,7 +6,7 @@ on:
     branches: [ main ]
     paths:
       - '.github/workflows/build-dsh-015.yml'
-      - 'scripts/patch-unsigned.ps1'
+      - 'scripts/patch_unsigned.py'
 
 permissions:
   contents: read
@@ -43,7 +43,7 @@ jobs:
 
       - name: Apply minimal unsigned-packaging patch
         shell: pwsh
-        run: ./scripts/patch-unsigned.ps1
+        run: python ./scripts/patch_unsigned.py
 
       - name: Setup Node 24
         uses: actions/setup-node@v4
