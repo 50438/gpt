@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $path = Join-Path $PWD 'deepseek-harness\apps\desktop\electron-builder.config.mjs'
-$text = [System.IO.File]::ReadAllText($path)
+$text = [System.IO.File]::ReadAllText($path).Replace("`r`n", "`n")
 
 function Replace-Exact([string]$old, [string]$new, [string]$label) {
   if (-not $script:text.Contains($old)) { throw "Patch anchor not found: $label" }
@@ -25,8 +25,10 @@ Replace-Exact @'
 
 Replace-Exact @'
   const update = resolveDesktopAutoUpdateConfig(env, resolvedPlatform, resolvedArch)
+  const buildPaths = desktopTargetBuildPaths(update.target)
 '@ @'
   const update = unsigned ? undefined : resolveDesktopAutoUpdateConfig(env, resolvedPlatform, resolvedArch)
+  const buildPaths = desktopTargetBuildPaths(unsigned ? 'win-x64' : update.target)
 '@ 'disable updater for unsigned build'
 
 Replace-Exact @'
@@ -36,10 +38,12 @@ Replace-Exact @'
 '@ 'unsigned artifact suffix'
 
 Replace-Exact @'
+    win: {
       forceCodeSigning: true,
 '@ @'
+    win: {
       forceCodeSigning: !unsigned,
-'@ 'disable forceCodeSigning'
+'@ 'disable Windows forceCodeSigning'
 
 Replace-Exact @'
     publish: [{ provider: 'generic', url: update.publicUrl }],
@@ -47,7 +51,8 @@ Replace-Exact @'
     publish: update === undefined ? null : [{ provider: 'generic', url: update.publicUrl }],
 '@ 'disable publish config'
 
-[System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false)))
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($path, $text, $utf8)
 
 Push-Location 'deepseek-harness'
 $changed = @(git diff --name-only)
